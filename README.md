@@ -12,6 +12,33 @@ This allows you to use GitHub Copilot's agentic capabilities with any client tha
     *   Verify installation: `copilot --version`
 2.  **Go 1.21+** installed.
 
+## Docker
+
+You can run the server using Docker, which includes the GitHub Copilot CLI.
+
+### Build the Docker Image
+
+```bash
+docker build -t copilot-openai-server .
+```
+
+### Run the Container
+
+Set your GitHub personal access token with Copilot permissions:
+
+```bash
+export GH_TOKEN="your_personal_access_token"
+docker run -e GH_TOKEN=$GH_TOKEN -p 8080:8080 copilot-openai-server
+```
+
+**GitHub personal access token (PAT)** must be fine-grained with the `Copilot requests` permission enabled; see https://github.com/github/copilot-cli/issues/91 for details.
+
+The server will be available at `http://localhost:8080`.
+
+### Versioning note
+
+The Dockerfile pulls the latest Copilot SDK and Copilot CLI at build time instead of pinning specific releases ([Dockerfile](Dockerfile)). If a future SDK or CLI update introduces an incompatible change, the image may break until you pin or update both components together.
+
 ## Quick Start
 
 ### 1. Build the Server
