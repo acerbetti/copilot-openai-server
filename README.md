@@ -2,6 +2,8 @@
 
 An HTTP server that exposes OpenAI-compatible API endpoints (`/v1/chat/completions`, `/v1/models`), powered by the [GitHub Copilot SDK](https://github.com/github/copilot-sdk).
 
+See the [CHANGELOG](./CHANGELOG.md) for release notes and history.
+
 This allows you to use GitHub Copilot's agentic capabilities with any client that supports the OpenAI API (e.g., Open WebUI, custom scripts, etc.).
 
 ## Prerequisites
