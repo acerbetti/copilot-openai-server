@@ -7,9 +7,9 @@ This allows you to use GitHub Copilot's agentic capabilities with any client tha
 ## Prerequisites
 
 1.  **GitHub Copilot CLI** must be installed and authenticated.
-    *   Install via GitHub CLI: `gh extension install github/gh-copilot`
-    *   Or ensure the `copilot` binary is in your PATH.
-    *   Verify installation: `copilot --version`
+    - Install via GitHub CLI: `gh extension install github/gh-copilot`
+    - Or ensure the `copilot` binary is in your PATH.
+    - Verify installation: `copilot --version`
 2.  **Go 1.21+** installed.
 
 ## Docker
@@ -24,10 +24,10 @@ docker build -t copilot-openai-server .
 
 ### Run the Container
 
-Set your GitHub personal access token with Copilot permissions:
+Set your GitHub personal access token with Copilot permissions. Historically this was the only way to authenticate, but starting in this version the token may also be supplied on each request (see **API Key** section below).
 
 ```bash
-export GH_TOKEN="your_personal_access_token"
+export GH_TOKEN="your_personal_access_token"          # default/fallback token
 docker run -e GH_TOKEN=$GH_TOKEN -p 8080:8080 copilot-openai-server
 ```
 
@@ -75,17 +75,23 @@ Supports standard OpenAI chat completion parameters, including streaming and too
 
 **Basic Request:**
 
+You can pass an API key via the body or header. The header wins if both are supplied.
+
 ```bash
 curl http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $GH_TOKEN" \
   -d '{
     "model": "gpt-4o",
+    "api_key": "'$GH_TOKEN'",
     "messages": [
       {"role": "system", "content": "You are a helpful assistant."},
       {"role": "user", "content": "Hello! How does this server work?"}
     ]
   }'
 ```
+
+When no key is supplied, the server will fall back to the value of `GH_TOKEN` set when the process started. If no key is available at all the request will be rejected with HTTP 401.
 
 **Streaming Request:**
 
@@ -133,8 +139,8 @@ You can easily use this with [Open WebUI](https://docs.openwebui.com/):
 1.  Run this server (`./copilot-server`).
 2.  In Open WebUI, go to **Settings > Connections > OpenAI**.
 3.  Add a new connection:
-    *   **API Base URL:** `http://localhost:8080`
-    *   **API Key:** `any-string` (not validated by this server, but authentication with Copilot happens via the CLI on the host machine).
+    - **API Base URL:** `http://localhost:8080`
+    - **API Key:** `any-string` (not validated by this server, but authentication with Copilot happens via the CLI on the host machine). Alternatively you can provide a GitHub token on each request as described below.
 4.  Save and select a Copilot model to start chatting.
 
 ## Development

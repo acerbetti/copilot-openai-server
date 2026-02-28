@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -12,28 +13,105 @@ import (
 	copilot "github.com/github/copilot-sdk/go"
 )
 
-// Server holds the copilot client and configuration
+// Server holds the copilot client(s) and configuration
+// Clients are keyed by the GitHub token; an optional default
+// client is created from the GH_TOKEN environment variable.
 type Server struct {
-	client *copilot.Client
-	mu     sync.Mutex
+	defaultClient *copilot.Client
+	clients       map[string]*copilot.Client
+	mu            sync.Mutex
 }
 
-// NewServer creates a new server instance
+// NewServer creates a new server instance.  If the
+// GH_TOKEN environment variable is set, a default client is
+// created with that token; otherwise the server starts with no
+// authenticated client and will reject requests until an api_key
+// is supplied by the caller.
 func NewServer() (*Server, error) {
+	srv := &Server{
+		clients: make(map[string]*copilot.Client),
+	}
+
+	if gh := os.Getenv("GH_TOKEN"); gh != "" {
+		client := copilot.NewClient(&copilot.ClientOptions{
+			LogLevel: "error",
+			Env:     []string{"COPILOT_GITHUB_TOKEN=" + gh},
+		})
+		if err := client.Start(); err != nil {
+			return nil, fmt.Errorf("failed to start default copilot client: %w", err)
+		}
+		srv.defaultClient = client
+	}
+
+	return srv, nil
+}
+
+// Close stops all copilot clients managed by the server
+func (s *Server) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.defaultClient != nil {
+		s.defaultClient.Stop()
+	}
+	for _, c := range s.clients {
+		c.Stop()
+	}
+}
+
+// getAPIKeyFromHeader returns the token supplied via
+// Authorization: Bearer <token> (case‑insensitive) or empty.
+func getAPIKeyFromHeader(r *http.Request) string {
+	auth := r.Header.Get("Authorization")
+	if auth == "" {
+		return ""
+	}
+	fields := strings.Fields(auth)
+	if len(fields) == 2 && strings.EqualFold(fields[0], "Bearer") {
+		return fields[1]
+	}
+	return ""
+}
+
+// extractAPIKey decides which key to use for a request.  Header wins
+// over JSON field.  It returns the token string (possibly empty).
+func extractAPIKey(r *http.Request, req *ChatCompletionRequest) string {
+	if h := getAPIKeyFromHeader(r); h != "" {
+		return h
+	}
+	if req != nil && req.ApiKey != "" {
+		return req.ApiKey
+	}
+	return ""
+}
+
+// getClient returns an active copilot client for the given
+// GitHub token.  A nil/empty token yields the default client if
+// available; otherwise an error is returned.  New clients are
+// temporarily created and cached.
+func (s *Server) getClient(token string) (*copilot.Client, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if token == "" {
+		if s.defaultClient != nil {
+			return s.defaultClient, nil
+		}
+		return nil, fmt.Errorf("no API key provided")
+	}
+
+	if client, ok := s.clients[token]; ok {
+		return client, nil
+	}
+
 	client := copilot.NewClient(&copilot.ClientOptions{
 		LogLevel: "error",
+		Env:     []string{"COPILOT_GITHUB_TOKEN=" + token},
 	})
-
 	if err := client.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start copilot client: %w", err)
 	}
-
-	return &Server{client: client}, nil
-}
-
-// Close stops the copilot client
-func (s *Server) Close() {
-	s.client.Stop()
+	s.clients[token] = client
+	return client, nil
 }
 
 // HandleModels handles GET /v1/models
@@ -43,7 +121,15 @@ func (s *Server) HandleModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models, err := s.client.ListModels()
+	// authentication
+	apiKey := getAPIKeyFromHeader(r)
+	client, err := s.getClient(apiKey)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "Missing or invalid API key", "authentication_error")
+		return
+	}
+
+	models, err := client.ListModels()
 	if err != nil {
 		log.Printf("Error listing models: %v", err)
 		writeError(w, http.StatusInternalServerError, "Failed to list models", "api_error")
@@ -77,6 +163,14 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	var req ChatCompletionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body", "invalid_request_error")
+		return
+	}
+
+	// enforce API key, either header or body
+	apiKey := extractAPIKey(r, &req)
+	client, err := s.getClient(apiKey)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "Missing or invalid API key", "authentication_error")
 		return
 	}
 
@@ -160,7 +254,7 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create session
-	session, err := s.client.CreateSession(sessionConfig)
+	session, err := client.CreateSession(sessionConfig)
 	if err != nil {
 		log.Printf("[ERROR] Creating session failed: %v", err)
 		writeError(w, http.StatusInternalServerError, "Failed to create session", "api_error")

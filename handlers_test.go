@@ -1,8 +1,11 @@
 package main
 
 import (
+	"net/http"
 	"strings"
 	"testing"
+
+	copilot "github.com/github/copilot-sdk/go"
 )
 
 func TestBuildPrompt(t *testing.T) {
@@ -73,3 +76,59 @@ func TestBuildPrompt(t *testing.T) {
 		})
 	}
 }
+
+func TestGetAPIKeyFromHeader(t *testing.T) {
+	req, _ := http.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "Bearer abc123")
+	if got := getAPIKeyFromHeader(req); got != "abc123" {
+		t.Errorf("expected abc123, got %q", got)
+	}
+
+	req.Header.Set("Authorization", "bearer XYZ")
+	if got := getAPIKeyFromHeader(req); got != "XYZ" {
+		t.Errorf("case-insensitive Bearer failed, got %q", got)
+	}
+
+	req.Header.Set("Authorization", "Token abc")
+	if got := getAPIKeyFromHeader(req); got != "" {
+		t.Errorf("unexpected non-empty for wrong scheme: %q", got)
+	}
+}
+
+func TestExtractAPIKey(t *testing.T) {
+	req, _ := http.NewRequest("POST", "/", strings.NewReader("{}"))
+	some := "foo"
+	body := ChatCompletionRequest{ApiKey: some}
+	if got := extractAPIKey(req, &body); got != some {
+		t.Errorf("expected body key, got %q", got)
+	}
+
+	req.Header.Set("Authorization", "Bearer bar")
+	if got := extractAPIKey(req, &body); got != "bar" {
+		t.Errorf("header should override body, got %q", got)
+	}
+}
+
+func TestHandleChatCompletions_NoAPIKey(t *testing.T) {
+	srv := &Server{clients: make(map[string]*copilot.Client)}
+	// no default client
+	reqBody := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
+	req, _ := http.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+	rw := &responseRecorder{head: http.Header{}}
+	srv.HandleChatCompletions(rw, req)
+	if rw.status != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rw.status)
+	}
+}
+
+// simple response recorder to capture status for testing handlers
+
+type responseRecorder struct {
+	head   http.Header
+	body   strings.Builder
+	status int
+}
+
+func (r *responseRecorder) Header() http.Header { return r.head }
+func (r *responseRecorder) Write(b []byte) (int, error) { return r.body.Write(b) }
+func (r *responseRecorder) WriteHeader(code int) { r.status = code }

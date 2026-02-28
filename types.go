@@ -19,6 +19,10 @@ type ChatCompletionRequest struct {
 	Tools            []Tool      `json:"tools,omitempty"`
 	ToolChoice       interface{} `json:"tool_choice,omitempty"`
 	User             string      `json:"user,omitempty"`
+	// ApiKey is the GitHub Copilot token supplied by the client.
+	// It mirrors the OpenAI `api_key` convention and may also be
+	// provided via the Authorization header.
+	ApiKey           string      `json:"api_key,omitempty"`
 }
 
 // Message represents a chat message
