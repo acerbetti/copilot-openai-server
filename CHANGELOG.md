@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.1] - 2026-02-28
+
+### Added
+
+- Docker workflow now builds and pushes a **multi-architecture** image (amd64 & arm64) using Buildx
+
 ## [0.1.0] - 2026-02-28
 
 ### Added
