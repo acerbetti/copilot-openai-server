@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.2] - 2026-02-28
+
+### Fixed
+
+- Preserve the full process environment when injecting `COPILOT_GITHUB_TOKEN` into Copilot clients; previously the token was the only variable and the CLI would hang in containers, causing request timeouts.
+- Clarify authentication requirements: classic `ghp_` PATs are unsupported; only fine‑grained `github_pat_...` tokens (or OAuth tokens) may be used. Header‑only authentication now works when server starts with an empty token.
+
 ## [0.1.1] - 2026-02-28
 
 ### Added
