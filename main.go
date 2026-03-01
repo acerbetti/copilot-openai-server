@@ -14,6 +14,8 @@ import (
 	"time"
 )
 
+const version = "0.1.3"
+
 func main() {
 	port := flag.Int("port", 8080, "Port to listen on")
 	flag.Parse()
@@ -77,7 +79,7 @@ func main() {
 		os.Exit(0)
 	}()
 
-	log.Printf("Starting OpenAI-compatible Copilot server on http://localhost%s", addr)
+	log.Printf("Starting OpenAI-compatible Copilot server v%s on http://localhost%s", version, addr)
 	log.Printf("Endpoints:")
 	log.Printf("  GET  /v1/models")
 	log.Printf("  POST /v1/chat/completions")

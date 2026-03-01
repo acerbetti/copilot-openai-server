@@ -1,5 +1,7 @@
 # Copilot OpenAI-Compatible Server
 
+_The binary includes a `version` constant that is logged when the server starts._
+
 An HTTP server that exposes OpenAI-compatible API endpoints (`/v1/chat/completions`, `/v1/models`), powered by the [GitHub Copilot SDK](https://github.com/github/copilot-sdk).
 
 See the [CHANGELOG](./CHANGELOG.md) for release notes and history.

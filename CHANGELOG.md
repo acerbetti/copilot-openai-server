@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - Streaming responses (`stream=true`) still use SSE but headers and the initial role chunk are delayed
   until the first piece of content, allowing error responses before any data is sent.
 - Added regression tests covering status mapping and error handling in `handlers_test.go`.
+- Log the server `version` constant during startup so initial state output shows the release.
 
 ## [0.1.2] - 2026-02-28
 
