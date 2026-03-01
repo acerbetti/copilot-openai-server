@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -295,6 +297,7 @@ func (s *Server) handleNonStreamingResponse(w http.ResponseWriter, session *copi
 	var contentBuilder strings.Builder
 	var toolCalls []ToolCall
 	var finishReason string = "stop"
+	var sessionErrMessage string
 
 	done := make(chan bool)
 	var closeOnce sync.Once
@@ -327,7 +330,8 @@ func (s *Server) handleNonStreamingResponse(w http.ResponseWriter, session *copi
 
 		case copilot.SessionError:
 			if event.Data.Message != nil {
-				log.Printf("Session error: %s", *event.Data.Message)
+				sessionErrMessage = *event.Data.Message
+				log.Printf("Session error: %s", sessionErrMessage)
 			}
 			closeOnce.Do(func() { close(done) })
 		}
@@ -349,6 +353,12 @@ func (s *Server) handleNonStreamingResponse(w http.ResponseWriter, session *copi
 	case <-time.After(5 * time.Minute):
 		log.Printf("Request timed out")
 		writeError(w, http.StatusGatewayTimeout, "Request timed out", "api_error")
+		return
+	}
+
+	if sessionErrMessage != "" {
+		status := statusFromSessionError(sessionErrMessage)
+		writeError(w, status, userMessageFromSessionError(sessionErrMessage), openAIErrorTypeForStatus(status))
 		return
 	}
 
@@ -376,12 +386,6 @@ func (s *Server) handleNonStreamingResponse(w http.ResponseWriter, session *copi
 
 // handleStreamingResponse handles streaming chat completions with SSE
 func (s *Server) handleStreamingResponse(w http.ResponseWriter, session *copilot.Session, prompt, model string) {
-	// Set SSE headers
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "Streaming not supported", "api_error")
@@ -392,8 +396,45 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, session *copilot
 	done := make(chan bool)
 	var toolCalls []ToolCall
 	var mu sync.Mutex
+	var sessionErrMessage string
+	headersSent := false
+	roleChunkSent := false
+
+	ensureStreamingHeaders := func() {
+		if headersSent {
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+		headersSent = true
+	}
+
+	ensureRoleChunk := func() {
+		if roleChunkSent {
+			return
+		}
+		ensureStreamingHeaders()
+		chunk := ChatCompletionChunk{
+			ID:      completionID,
+			Object:  "chat.completion.chunk",
+			Created: currentTimestamp(),
+			Model:   model,
+			Choices: []Choice{{
+				Index:        0,
+				Delta:        &Message{Role: "assistant"},
+				FinishReason: nil,
+			}},
+		}
+		data, _ := json.Marshal(chunk)
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+		roleChunkSent = true
+	}
 
 	sendChunk := func(delta Message, finishReason *string) {
+		ensureRoleChunk()
 		chunk := ChatCompletionChunk{
 			ID:      completionID,
 			Object:  "chat.completion.chunk",
@@ -414,9 +455,6 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, session *copilot
 		fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	}
-
-	// Send initial chunk with role
-	sendChunk(Message{Role: "assistant"}, nil)
 
 	var closeOnce sync.Once
 	session.On(func(event copilot.SessionEvent) {
@@ -483,7 +521,8 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, session *copilot
 
 		case copilot.SessionError:
 			if event.Data.Message != nil {
-				log.Printf("[DEBUG] SessionError: %s", *event.Data.Message)
+				sessionErrMessage = *event.Data.Message
+				log.Printf("[DEBUG] SessionError: %s", sessionErrMessage)
 			}
 			closeOnce.Do(func() { close(done) })
 
@@ -509,6 +548,21 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, session *copilot
 		return
 	}
 
+	if sessionErrMessage != "" {
+		if !headersSent {
+			status := statusFromSessionError(sessionErrMessage)
+			writeError(w, status, userMessageFromSessionError(sessionErrMessage), openAIErrorTypeForStatus(status))
+			return
+		}
+		if !roleChunkSent {
+			ensureRoleChunk()
+		}
+		sendChunk(Message{}, strPtr("error"))
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		flusher.Flush()
+		return
+	}
+
 	// Send final chunk with finish_reason
 	mu.Lock()
 	if len(toolCalls) > 0 {
@@ -524,6 +578,47 @@ func (s *Server) handleStreamingResponse(w http.ResponseWriter, session *copilot
 	// log.Printf("[DEBUG] Sending [DONE] marker")
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()
+}
+
+var capiStatusCodePattern = regexp.MustCompile(`\b([1-5][0-9]{2})\b`)
+
+func statusFromSessionError(message string) int {
+	if idx := strings.Index(message, "CAPIError:"); idx >= 0 {
+		segment := message[idx:]
+		if matches := capiStatusCodePattern.FindStringSubmatch(segment); len(matches) == 2 {
+			if code, err := strconv.Atoi(matches[1]); err == nil {
+				return code
+			}
+		}
+	}
+	if strings.Contains(strings.ToLower(message), "timeout") {
+		return http.StatusGatewayTimeout
+	}
+	return http.StatusBadGateway
+}
+
+func openAIErrorTypeForStatus(status int) string {
+	switch {
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return "authentication_error"
+	case status >= 400 && status < 500:
+		return "invalid_request_error"
+	default:
+		return "api_error"
+	}
+}
+
+func userMessageFromSessionError(message string) string {
+	if idx := strings.Index(message, "Last error:"); idx >= 0 {
+		trimmed := strings.TrimSpace(message[idx+len("Last error:"):])
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	if strings.TrimSpace(message) == "" {
+		return "Upstream model request failed"
+	}
+	return message
 }
 
 // buildPrompt converts OpenAI messages to a single prompt string

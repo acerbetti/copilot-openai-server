@@ -162,6 +162,61 @@ func TestHandleChatCompletions_NoAPIKey(t *testing.T) {
 	}
 }
 
+func TestStatusFromSessionError(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  string
+		want int
+	}{
+		{
+			name: "Parse CAPIError 400",
+			msg:  "Execution failed... Last error: CAPIError: 400 400 Bad Request",
+			want: http.StatusBadRequest,
+		},
+		{
+			name: "Timeout fallback",
+			msg:  "upstream timeout waiting for model",
+			want: http.StatusGatewayTimeout,
+		},
+		{
+			name: "Generic fallback",
+			msg:  "unexpected upstream failure",
+			want: http.StatusBadGateway,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := statusFromSessionError(tt.msg); got != tt.want {
+				t.Fatalf("statusFromSessionError() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUserMessageFromSessionError(t *testing.T) {
+	msg := "Failed to get response... Last error: CAPIError: 400 400 Bad Request"
+	if got := userMessageFromSessionError(msg); got != "CAPIError: 400 400 Bad Request" {
+		t.Fatalf("unexpected user message: %q", got)
+	}
+
+	if got := userMessageFromSessionError("   "); got != "Upstream model request failed" {
+		t.Fatalf("empty message fallback mismatch: %q", got)
+	}
+}
+
+func TestOpenAIErrorTypeForStatus(t *testing.T) {
+	if got := openAIErrorTypeForStatus(http.StatusUnauthorized); got != "authentication_error" {
+		t.Fatalf("401 should map to authentication_error, got %q", got)
+	}
+	if got := openAIErrorTypeForStatus(http.StatusBadRequest); got != "invalid_request_error" {
+		t.Fatalf("400 should map to invalid_request_error, got %q", got)
+	}
+	if got := openAIErrorTypeForStatus(http.StatusBadGateway); got != "api_error" {
+		t.Fatalf("502 should map to api_error, got %q", got)
+	}
+}
+
 // simple response recorder to capture status for testing handlers
 
 type responseRecorder struct {
