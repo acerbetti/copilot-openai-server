@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.3] - 2026-03-01
+
+### Fixed
+
+- Correctly propagate upstream `CAPIError`/timeout failures to clients instead of returning an empty
+  `200` response. Errors are now mapped to appropriate HTTP status codes and OpenAI-style error JSON.
+- Streaming responses (`stream=true`) still use SSE but headers and the initial role chunk are delayed
+  until the first piece of content, allowing error responses before any data is sent.
+- Added regression tests covering status mapping and error handling in `handlers_test.go`.
+
 ## [0.1.2] - 2026-02-28
 
 ### Fixed
