@@ -35,7 +35,7 @@ func NewServer() (*Server, error) {
 	if gh := os.Getenv("GH_TOKEN"); gh != "" {
 		client := copilot.NewClient(&copilot.ClientOptions{
 			LogLevel: "error",
-			Env:     []string{"COPILOT_GITHUB_TOKEN=" + gh},
+			Env:      buildClientEnv(gh),
 		})
 		if err := client.Start(); err != nil {
 			return nil, fmt.Errorf("failed to start default copilot client: %w", err)
@@ -105,13 +105,28 @@ func (s *Server) getClient(token string) (*copilot.Client, error) {
 
 	client := copilot.NewClient(&copilot.ClientOptions{
 		LogLevel: "error",
-		Env:     []string{"COPILOT_GITHUB_TOKEN=" + token},
+		Env:      buildClientEnv(token),
 	})
 	if err := client.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start copilot client: %w", err)
 	}
 	s.clients[token] = client
 	return client, nil
+}
+
+// buildClientEnv preserves the current process environment and injects
+// COPILOT_GITHUB_TOKEN so the Copilot CLI can still access PATH, HOME, etc.
+func buildClientEnv(token string) []string {
+	base := os.Environ()
+	filtered := make([]string, 0, len(base)+1)
+	for _, entry := range base {
+		if strings.HasPrefix(entry, "COPILOT_GITHUB_TOKEN=") {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	filtered = append(filtered, "COPILOT_GITHUB_TOKEN="+token)
+	return filtered
 }
 
 // HandleModels handles GET /v1/models
